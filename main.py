@@ -21,7 +21,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 # Model names are overridable via env so future upgrades need no code change.
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-004")
 
 # Initialize FastAPI App
@@ -252,34 +252,6 @@ def fetch_retrieved_context(query: str, match_count: int = 5) -> tuple[str, List
 @app.get("/")
 def read_root():
     return {"status": "online", "message": "Hermeneutics Bible Study Assistant API running"}
-
-@app.get("/api/v1/models")
-def list_available_models(probe: Optional[str] = None):
-    """Diagnostic: which models this API key can actually use for generateContent.
-
-    Pass ?probe=modelA,modelB to attempt a tiny live generation on each and see
-    which ones truly work for this key (listing alone can be misleading).
-    """
-    try:
-        out = []
-        for m in client.models.list():
-            actions = list(getattr(m, "supported_actions", []) or [])
-            out.append({"name": getattr(m, "name", None), "supported_actions": actions})
-        gen = [m["name"] for m in out if "generateContent" in m["supported_actions"]]
-
-        probe_results = None
-        if probe:
-            probe_results = {}
-            for name in [p.strip() for p in probe.split(",") if p.strip()]:
-                try:
-                    r = client.models.generate_content(model=name, contents="Reply with the word OK.")
-                    probe_results[name] = {"ok": True, "sample": (r.text or "")[:40]}
-                except Exception as pe:
-                    probe_results[name] = {"ok": False, "error": str(pe)[:160]}
-
-        return {"configured_model": GEMINI_MODEL, "generateContent_models": gen, "probe": probe_results}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Model listing error: {str(e)}")
 
 @app.post("/api/v1/next-step", response_model=StudyStepResponse)
 def generate_next_step(request: StudyStepRequest):
