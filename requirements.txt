@@ -2,4 +2,4 @@ fastapi
 uvicorn
 pydantic
 supabase
-google-generativeai
+google-genai>=1.0.0

@@ -4,7 +4,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from supabase import create_client, Client
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 # ------------------------------------------------------------------------------
 # Environment & Client Initialization
@@ -17,7 +18,11 @@ if not all([SUPABASE_URL, SUPABASE_KEY, GEMINI_API_KEY]):
     raise RuntimeError("Missing required environment variables (SUPABASE_URL, SUPABASE_KEY, GEMINI_API_KEY).")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-genai.configure(api_key=GEMINI_API_KEY)
+client = genai.Client(api_key=GEMINI_API_KEY)
+
+# Model names are overridable via env so future upgrades need no code change.
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-004")
 
 # Initialize FastAPI App
 app = FastAPI(
@@ -204,12 +209,13 @@ def fetch_retrieved_context(query: str, match_count: int = 5) -> tuple[str, List
     """Generates query embedding and calls Supabase pgvector match function."""
     try:
         # Generate embedding using Gemini
-        embed_result = genai.embed_content(
-            model="models/text-embedding-004",
-            content=query,
-            task_type="retrieval_query"
+        # output_dimensionality=768 must match the vectors stored by ingest_books.py.
+        embed_result = client.models.embed_content(
+            model=EMBEDDING_MODEL,
+            contents=query,
+            config=types.EmbedContentConfig(task_type="RETRIEVAL_QUERY", output_dimensionality=768),
         )
-        query_embedding = embed_result["embedding"]
+        query_embedding = embed_result.embeddings[0].values
 
         # Call Supabase RPC match_documents
         response = supabase.rpc(
@@ -262,16 +268,18 @@ def generate_next_step(request: StudyStepRequest):
 
     # 3. Call Gemini Model
     try:
-        model = genai.GenerativeModel("gemini-1.5-flash") # or gemini-2.0-flash / gemini-1.5-pro
-        
         # Format chat history for context
-        messages = []
+        contents = []
         for item in request.history:
-            messages.append({"role": "user" if item.role == "user" else "model", "parts": [item.content]})
-        
-        messages.append({"role": "user", "parts": [formatted_prompt]})
+            role = "user" if item.role == "user" else "model"
+            contents.append(types.Content(role=role, parts=[types.Part.from_text(text=item.content)]))
 
-        response = model.generate_content(messages)
+        contents.append(types.Content(role="user", parts=[types.Part.from_text(text=formatted_prompt)]))
+
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=contents,
+        )
         output_text = response.text if response.text else "No output generated."
 
         return StudyStepResponse(
