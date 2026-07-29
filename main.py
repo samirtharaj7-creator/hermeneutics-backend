@@ -253,6 +253,19 @@ def fetch_retrieved_context(query: str, match_count: int = 5) -> tuple[str, List
 def read_root():
     return {"status": "online", "message": "Hermeneutics Bible Study Assistant API running"}
 
+@app.get("/api/v1/models")
+def list_available_models():
+    """Diagnostic: which models this API key can actually use for generateContent."""
+    try:
+        out = []
+        for m in client.models.list():
+            actions = list(getattr(m, "supported_actions", []) or [])
+            out.append({"name": getattr(m, "name", None), "supported_actions": actions})
+        gen = [m["name"] for m in out if "generateContent" in m["supported_actions"]]
+        return {"configured_model": GEMINI_MODEL, "generateContent_models": gen, "all": out}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Model listing error: {str(e)}")
+
 @app.post("/api/v1/next-step", response_model=StudyStepResponse)
 def generate_next_step(request: StudyStepRequest):
     # 1. Fetch relevant vector store chunks from Supabase
