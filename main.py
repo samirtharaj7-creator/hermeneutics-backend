@@ -10,15 +10,15 @@ from google import genai
 app = FastAPI(
     title="Hermeneutics Bible Study Assistant API",
     version="1.0.0",
-    description="API for multi-step hermeneutical exegesis powered by Supabase pgvector and Gemini."
+    description="API for multi-step hermeneutical exegesis powered by Supabase pgvector and Gemini 3.5."
 )
 
 # Enable CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows requests from local dev servers and production domains
+    allow_origins=["*"],  # Permits cross-origin requests from local dev servers and frontends
     allow_credentials=True,
-    allow_methods=["*"],  # Allows GET, POST, OPTIONS, etc.
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
@@ -27,7 +27,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY") or os.getenv("SUPABASE_PUBLISHABLE_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 
-# Initialize Gemini Client using google-genai SDK
+# Initialize Gemini Client
 genai_client = None
 if GEMINI_API_KEY:
     genai_client = genai.Client(api_key=GEMINI_API_KEY)
@@ -103,10 +103,10 @@ Retrieved Hermeneutical Context:
 Format your response as a helpful study guide step.
 """
 
-        # Call Gemini model via google-genai Client
+        # Call Gemini model using gemini-3.5-flash
         if genai_client:
             response = genai_client.models.generate_content(
-                model="gemini-2.5-flash",
+                model="gemini-3.5-flash",
                 contents=prompt,
             )
             generated_text = response.text if response and response.text else "No response generated."
