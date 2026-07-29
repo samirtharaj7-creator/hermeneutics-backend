@@ -254,15 +254,30 @@ def read_root():
     return {"status": "online", "message": "Hermeneutics Bible Study Assistant API running"}
 
 @app.get("/api/v1/models")
-def list_available_models():
-    """Diagnostic: which models this API key can actually use for generateContent."""
+def list_available_models(probe: Optional[str] = None):
+    """Diagnostic: which models this API key can actually use for generateContent.
+
+    Pass ?probe=modelA,modelB to attempt a tiny live generation on each and see
+    which ones truly work for this key (listing alone can be misleading).
+    """
     try:
         out = []
         for m in client.models.list():
             actions = list(getattr(m, "supported_actions", []) or [])
             out.append({"name": getattr(m, "name", None), "supported_actions": actions})
         gen = [m["name"] for m in out if "generateContent" in m["supported_actions"]]
-        return {"configured_model": GEMINI_MODEL, "generateContent_models": gen, "all": out}
+
+        probe_results = None
+        if probe:
+            probe_results = {}
+            for name in [p.strip() for p in probe.split(",") if p.strip()]:
+                try:
+                    r = client.models.generate_content(model=name, contents="Reply with the word OK.")
+                    probe_results[name] = {"ok": True, "sample": (r.text or "")[:40]}
+                except Exception as pe:
+                    probe_results[name] = {"ok": False, "error": str(pe)[:160]}
+
+        return {"configured_model": GEMINI_MODEL, "generateContent_models": gen, "probe": probe_results}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Model listing error: {str(e)}")
 
