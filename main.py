@@ -1,4 +1,5 @@
 import os
+import time
 from typing import List, Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,6 +24,42 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 # Model names are overridable via env so future upgrades need no code change.
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-004")
+
+# Resilience: if the primary model is overloaded (503) or unavailable, retry
+# briefly and then fall back to other models. Primary first, then env-configurable
+# fallbacks, deduped. gemini-flash-latest is a stable alias confirmed for this key.
+_FALLBACK_ENV = os.getenv("GEMINI_FALLBACK_MODELS", "gemini-flash-latest,gemini-flash-lite-latest")
+MODEL_CHAIN: List[str] = []
+for _m in [GEMINI_MODEL] + [s.strip() for s in _FALLBACK_ENV.split(",")]:
+    if _m and _m not in MODEL_CHAIN:
+        MODEL_CHAIN.append(_m)
+
+RETRIES_PER_MODEL = int(os.getenv("GEMINI_RETRIES_PER_MODEL", "2"))
+RETRY_BACKOFF_SECONDS = float(os.getenv("GEMINI_RETRY_BACKOFF", "1.0"))
+
+
+def _is_transient_error(msg: str) -> bool:
+    m = (msg or "").lower()
+    return any(tok in m for tok in [
+        "503", "unavailable", "429", "resource_exhausted",
+        "overloaded", "high demand", "500", "internal", "deadline", "timeout",
+    ])
+
+
+def generate_with_fallback(contents):
+    """Try the primary model, then fallbacks. Retry transient errors briefly per model."""
+    last_err = None
+    for model_name in MODEL_CHAIN:
+        for attempt in range(max(1, RETRIES_PER_MODEL)):
+            try:
+                return client.models.generate_content(model=model_name, contents=contents), model_name
+            except Exception as e:  # noqa: BLE001 - want to fall through on any provider error
+                last_err = e
+                if _is_transient_error(str(e)) and attempt + 1 < RETRIES_PER_MODEL:
+                    time.sleep(RETRY_BACKOFF_SECONDS)
+                    continue
+                break  # non-transient, or out of retries for this model: try the next one
+    raise last_err if last_err else RuntimeError("No model produced a response.")
 
 # Initialize FastAPI App
 app = FastAPI(
@@ -279,10 +316,9 @@ def generate_next_step(request: StudyStepRequest):
 
         contents.append(types.Content(role="user", parts=[types.Part.from_text(text=formatted_prompt)]))
 
-        response = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=contents,
-        )
+        response, used_model = generate_with_fallback(contents)
+        if used_model != GEMINI_MODEL:
+            print(f"Primary model '{GEMINI_MODEL}' unavailable; served with fallback '{used_model}'.")
         output_text = response.text if response.text else "No output generated."
 
         return StudyStepResponse(
@@ -292,4 +328,10 @@ def generate_next_step(request: StudyStepRequest):
         )
 
     except Exception as e:
+        print(f"LLM generation failed across model chain {MODEL_CHAIN}: {e}")
+        if _is_transient_error(str(e)):
+            raise HTTPException(
+                status_code=503,
+                detail="The study guide is experiencing high demand right now. Please try again in a moment.",
+            )
         raise HTTPException(status_code=500, detail=f"LLM Generation Error: {str(e)}")
