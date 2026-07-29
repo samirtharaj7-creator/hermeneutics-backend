@@ -4,7 +4,7 @@ from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from supabase import create_client, Client
-import google.generativeai as genai
+from google import genai
 
 # Initialize FastAPI App
 app = FastAPI(
@@ -22,18 +22,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load and validate Environment Variables
+# Load Environment Variables
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY") or os.getenv("SUPABASE_PUBLISHABLE_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 
-if not SUPABASE_URL or not SUPABASE_KEY:
-    print("Warning: Supabase credentials are missing from environment variables.")
-
-if not GEMINI_API_KEY:
-    print("Warning: Gemini API Key is missing from environment variables.")
+# Initialize Gemini Client using google-genai SDK
+genai_client = None
+if GEMINI_API_KEY:
+    genai_client = genai.Client(api_key=GEMINI_API_KEY)
 else:
-    genai.configure(api_key=GEMINI_API_KEY)
+    print("Warning: Gemini API Key is missing from environment variables.")
 
 # Initialize Supabase Client
 supabase: Optional[Client] = None
@@ -80,8 +79,6 @@ async def generate_next_step(request: StudyStepRequest):
         sources = []
         
         if supabase:
-            # Perform vector search / query against Supabase
-            # Adjust table/rpc name based on your schema setup
             try:
                 res = supabase.from_("documents").select("content, source").limit(3).execute()
                 if res.data:
@@ -106,11 +103,13 @@ Retrieved Hermeneutical Context:
 Format your response as a helpful study guide step.
 """
 
-        # Call Gemini model
-        if GEMINI_API_KEY:
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            response = model.generate_content(prompt)
-            generated_text = response.text if response else "No response generated."
+        # Call Gemini model via google-genai Client
+        if genai_client:
+            response = genai_client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+            )
+            generated_text = response.text if response and response.text else "No response generated."
         else:
             generated_text = f"Received query: '{request.query}'. (Gemini API key not configured on backend)."
 
